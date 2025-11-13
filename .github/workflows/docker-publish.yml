@@ -33,5 +33,5 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ secrets.DOCKER_HUB_USERNAME }}/${{ GITHUB_REPOSITORY_NAME_PART }}:${{ github.ref_name }}
-            ${{ secrets.DOCKER_HUB_USERNAME }}/${{ GITHUB_REPOSITORY_NAME_PART }}:latest
+            ${{ secrets.DOCKER_HUB_USERNAME }}/solara-music:${{ github.ref_name }}
+            ${{ secrets.DOCKER_HUB_USERNAME }}/solara-music:latest
