@@ -62,8 +62,8 @@ const dom = {
 };
 
 // 新增搜索配置常量
-const SEARCH_PAGE_SIZE = 100; // 每页搜索结果数量，增加到100条
-const MAX_RADAR_OFFSET = 200; // 最大雷达偏移量，对应2页结果（2×100=200条）
+const SEARCH_PAGE_SIZE = 50; // 每页搜索结果数量，增加到100条
+const MAX_RADAR_OFFSET = 100; // 最大雷达偏移量，对应2页结果（2×50=100条）
 const MAX_SEARCH_PAGES = 2; // 最大搜索页数
 
 // 在文件开头的常量定义部分添加音质等级配置
@@ -621,172 +621,11 @@ function getNextLowerQuality(currentQuality) {
     return nextQuality ? nextQuality.value : null;
 }
 
-// 修改：获取下一个备选音源 - 优先网易，然后JOOX
-function getNextSource(currentSource) {
-    const sources = ["netease", "joox", "kuwo"]; // 优先顺序：网易 -> JOOX -> 酷我
-    
-    // 如果当前不是优先音源，从网易开始
-    if (currentSource !== "netease") {
-        return "netease";
-    }
-    // 如果当前是网易，切换到JOOX
-    if (currentSource === "netease") {
-        return "joox";
-    }
-    // 如果当前是JOOX，回到原音源（酷我）
-    return "kuwo";
-}
-
-// 新增：通过搜索获取相同歌曲在不同音源的信息
-async function findSongInOtherSource(song, targetSource) {
-    try {
-        const searchKeyword = `${song.name} ${Array.isArray(song.artist) ? song.artist.join(' ') : song.artist}`;
-        debugLog(`在音源 ${targetSource} 中搜索歌曲: ${searchKeyword}`);
-        
-        const results = await API.search(searchKeyword, targetSource, 10, 1);
-        
-        if (results && results.length > 0) {
-            // 尝试找到最匹配的歌曲
-            const matchedSong = results.find(item => 
-                item.name.toLowerCase().includes(song.name.toLowerCase()) ||
-                song.name.toLowerCase().includes(item.name.toLowerCase())
-            ) || results[0];
-            
-            debugLog(`在音源 ${targetSource} 中找到歌曲: ${matchedSong.name}`);
-            return {
-                ...matchedSong,
-                originalName: song.name,
-                originalArtist: song.artist
-            };
-        }
-    } catch (error) {
-        console.warn(`在音源 ${targetSource} 中搜索歌曲失败:`, error);
-    }
-    
-    return null;
-}
-
-// 修改：音源切换处理 - 添加状态检查防止重复切换
-async function handleSourceSwitch(song, error) {
-    // 检查当前歌曲是否已经改变，如果已经改变则停止重试
-    if (state.currentSong !== song) {
-        debugLog(`歌曲已改变，停止音源切换重试`);
-        return;
-    }
-    
-    state.sourceRetryCount = (state.sourceRetryCount || 0) + 1;
-    const currentSource = state.currentSourceAttempt || state.searchSource;
-    const nextSource = getNextSource(currentSource);
-    
-    debugLog(`尝试切换音源: ${currentSource} -> ${nextSource}, 音源重试次数=${state.sourceRetryCount}`);
-
-    // 如果超过最大音源重试次数，才尝试降低音质
-    if (state.sourceRetryCount > state.maxSourceRetries) {
-        debugLog(`所有音源均无法播放，尝试降低音质`);
-        state.qualityRetryCount++;
-        
-        // 尝试下一个较低音质
-        const nextQuality = getNextLowerQuality(state.currentQualityAttempt);
-        if (nextQuality) {
-            state.currentQualityAttempt = nextQuality;
-            const qualityInfo = QUALITY_LEVELS.find(q => q.value === nextQuality);
-            debugLog(`自动切换音质: ${state.currentQualityAttempt} -> ${nextQuality}`);
-            showNotification(`音质切换: ${qualityInfo?.label || nextQuality}`, 'info');
-            
-            // 使用新音质重新播放（回到原音源）
-            state.currentSourceAttempt = state.searchSource; // 回到原始音源
-            state.sourceRetryCount = 0; // 重置音源重试计数
-            
-            setTimeout(() => {
-                playSong(song, {
-                    autoplay: true,
-                    startTime: state.currentPlaybackTime,
-                    preserveProgress: true,
-                    isRetry: true
-                });
-            }, 500);
-        } else {
-            // 没有更低的音质可用，切换到下一首
-            debugLog(`所有音质均无法播放，切换到下一首歌曲`);
-            showNotification(`所有音源和音质均无法播放 ${song.name}，自动切换下一首`, 'error');
-            resetQualityState();
-            resetSourceState();
-            
-            // 切换到下一首前，先更新歌曲信息
-            const nextSong = getNextSong();
-            if (nextSong) {
-                state.currentSong = nextSong;
-                updateCurrentSongInfo(nextSong, { loadArtwork: true });
-            }
-            
-            playNext();
-        }
-        return;
-    }
-
-    // 优先尝试在下一个音源中查找相同歌曲
-    try {
-        showNotification(`正在尝试从${SOURCE_OPTIONS.find(s => s.value === nextSource)?.label}播放...`, 'info');
-        
-        const newSong = await findSongInOtherSource(song, nextSource);
-        
-        if (newSong) {
-            state.currentSourceAttempt = nextSource;
-            state.qualityRetryCount = 0; // 重置音质重试计数
-            state.currentQualityAttempt = state.playbackQuality; // 重置为默认音质
-            
-            debugLog(`找到替代音源歌曲，使用音源: ${nextSource}`);
-            showNotification(`已切换到${SOURCE_OPTIONS.find(s => s.value === nextSource)?.label}音源`, 'success');
-            
-            // 使用新音源的歌曲信息播放
-            setTimeout(() => {
-                // 再次检查当前歌曲是否仍然相同
-                if (state.currentSong === song) {
-                    playSong(newSong, {
-                        autoplay: true,
-                        startTime: state.currentPlaybackTime,
-                        preserveProgress: true,
-                        isRetry: true
-                    });
-                } else {
-                    debugLog(`歌曲已改变，取消音源切换播放`);
-                }
-            }, 500);
-        } else {
-            // 没有找到相同歌曲，继续尝试下一个音源
-            debugLog(`在音源 ${nextSource} 中未找到相同歌曲，继续尝试下一个音源`);
-            state.currentSourceAttempt = nextSource;
-            // 使用setTimeout避免递归调用栈溢出
-            setTimeout(() => {
-                if (state.currentSong === song) {
-                    handleSourceSwitch(song, error);
-                }
-            }, 100);
-        }
-    } catch (sourceError) {
-        console.error('音源切换失败:', sourceError);
-        // 音源搜索失败，继续尝试下一个音源
-        state.currentSourceAttempt = nextSource;
-        // 使用setTimeout避免递归调用栈溢出
-        setTimeout(() => {
-            if (state.currentSong === song) {
-                handleSourceSwitch(song, error);
-            }
-        }, 100);
-    }
-}
-
-// 修改：重置音源状态
-function resetSourceState() {
-    state.currentSourceAttempt = state.searchSource;
-    state.sourceRetryCount = 0;
-}
 
 function getLowestQuality() {
     return QUALITY_LEVELS[QUALITY_LEVELS.length - 1].value;
 }
 
-// 修改：重置音质状态时也重置音源切换标志
 function resetQualityState() {
     state.currentQualityAttempt = state.playbackQuality;
     state.qualityRetryCount = 0;
@@ -794,10 +633,10 @@ function resetQualityState() {
     state.playbackStuckCount = 0;
     state.isPlaybackStuck = false;
     state.isWaitingForPlayback = false;
-    resetSourceState(); // 同时重置音源状态
+    // 不再重置音源状态
     stopPlaybackMonitoring();
     stopLoadTimeoutMonitoring();
-    debugLog(`音质状态重置: 当前尝试音质=${state.currentQualityAttempt}, 重试次数=${state.qualityRetryCount}, 当前音源=${state.currentSourceAttempt}`);
+    debugLog(`音质状态重置: 当前尝试音质=${state.currentQualityAttempt}, 重试次数=${state.qualityRetryCount}`);
 }
 
 // 修改 playSong 函数，添加音质自动切换逻辑
@@ -941,29 +780,68 @@ async function playSong(song, options = {}) {
     }
 }
 
-// 修改：播放错误处理 - 优先切换音源而不是音质
 function handlePlaybackError(song, error) {
-    // 检查是否已经在处理音源切换
+    // 检查是否已经在处理音质切换
     if (state.isAutoQualitySwitching) {
-        debugLog(`已经在进行音质/音源切换，忽略重复错误`);
+        debugLog(`已经在进行音质切换，忽略重复错误`);
         return;
     }
     
     stopPlaybackMonitoring();
     stopLoadTimeoutMonitoring();
     
-    debugLog(`播放错误处理: 当前音质=${state.currentQualityAttempt}, 当前音源=${state.currentSourceAttempt}`);
+    debugLog(`播放错误处理: 当前音质=${state.currentQualityAttempt}`);
 
     // 设置标志防止重复处理
     state.isAutoQualitySwitching = true;
     
-    // 优先尝试切换音源，而不是降低音质
-    handleSourceSwitch(song, error);
+    // 直接尝试降低音质，不再切换音源
+    handleQualitySwitch(song, error);
     
     // 一段时间后重置标志
     setTimeout(() => {
         state.isAutoQualitySwitching = false;
     }, 3000);
+}
+
+// 新增：只降低音质的处理函数
+function handleQualitySwitch(song, error) {
+    state.qualityRetryCount++;
+    
+    debugLog(`尝试降低音质: 当前音质=${state.currentQualityAttempt}, 音质重试次数=${state.qualityRetryCount}`);
+
+    // 尝试下一个较低音质
+    const nextQuality = getNextLowerQuality(state.currentQualityAttempt);
+    if (nextQuality) {
+        state.currentQualityAttempt = nextQuality;
+        const qualityInfo = QUALITY_LEVELS.find(q => q.value === nextQuality);
+        debugLog(`自动切换音质: ${state.currentQualityAttempt} -> ${nextQuality}`);
+        showNotification(`音质切换: ${qualityInfo?.label || nextQuality}`, 'info');
+        
+        // 使用新音质重新播放（保持原音源）
+        setTimeout(() => {
+            playSong(song, {
+                autoplay: true,
+                startTime: state.currentPlaybackTime,
+                preserveProgress: true,
+                isRetry: true
+            });
+        }, 500);
+    } else {
+        // 没有更低的音质可用，切换到下一首
+        debugLog(`所有音质均无法播放，切换到下一首歌曲`);
+        showNotification(`所有音质均无法播放 ${song.name}，自动切换下一首`, 'error');
+        resetQualityState();
+        
+        // 切换到下一首前，先更新歌曲信息
+        const nextSong = getNextSong();
+        if (nextSong) {
+            state.currentSong = nextSong;
+            updateCurrentSongInfo(nextSong, { loadArtwork: true });
+        }
+        
+        playNext();
+    }
 }
 
 // 新增辅助函数：获取下一首歌曲
@@ -1300,9 +1178,6 @@ const state = {
     loadStartTime: 0, // 开始加载的时间戳
     maxLoadTime: 10000, // 最大加载时间（10秒）
     isWaitingForPlayback: false, // 是否在等待播放开始
-    currentSourceAttempt: savedSearchSource, // 当前尝试的音源
-    sourceRetryCount: 0, // 音源重试次数
-    maxSourceRetries: 2, // 修改这里：网易 -> JOOX -> 回到原音源降质
 };
 
 // ==== Media Session integration (Safari/iOS Lock Screen) ====
@@ -4892,9 +4767,10 @@ async function playSong(song, options = {}) {
         updateCurrentSongInfo(song, { loadArtwork: false });
 
         const currentQuality = state.currentQualityAttempt;
-        const currentSource = state.currentSourceAttempt || song.source || state.searchSource;
-        const audioUrl = API.getSongUrl({ ...song, source: currentSource }, currentQuality);
-        debugLog(`获取音频URL: ${audioUrl}, 音质: ${currentQuality}, 音源: ${currentSource}, 重试次数: ${state.qualityRetryCount}`);
+	   // 使用歌曲原本的音源，不再尝试切换音源
+	   const currentSource = song.source || state.searchSource;
+	   const audioUrl = API.getSongUrl({ ...song, source: currentSource }, currentQuality);
+	   debugLog(`获取音频URL: ${audioUrl}, 音质: ${currentQuality}, 音源: ${currentSource}, 重试次数: ${state.qualityRetryCount}`);
 
         const audioData = await API.fetchJson(audioUrl);
 
@@ -5122,9 +4998,9 @@ async function checkAndAutoAddRadarSongs() {
             debugLog(`自动添加雷达歌曲，使用关键词: ${keyword1} 和 ${keyword2}, 随机偏移量: ${randomOffset}`);
 
             const [results1, results2] = await Promise.all([
-                API.search(keyword1, "kuwo", SEARCH_PAGE_SIZE, Math.floor(randomOffset / SEARCH_PAGE_SIZE) + 1).catch(() => []),
-                API.search(keyword2, "kuwo", SEARCH_PAGE_SIZE, Math.floor((randomOffset + SEARCH_PAGE_SIZE) % MAX_RADAR_OFFSET / SEARCH_PAGE_SIZE) + 1).catch(() => [])
-            ]);
+		    API.search(keyword1, "netease", SEARCH_PAGE_SIZE, Math.floor(randomOffset / SEARCH_PAGE_SIZE) + 1).catch(() => []),
+		    API.search(keyword2, "netease", SEARCH_PAGE_SIZE, Math.floor((randomOffset + SEARCH_PAGE_SIZE) % MAX_RADAR_OFFSET / SEARCH_PAGE_SIZE) + 1).catch(() => [])
+		]);
 
             const allResults = [...(results1 || []), ...(results2 || [])];
             const uniqueResults = allResults.filter((song, index, self) => 
@@ -5158,7 +5034,7 @@ async function checkAndAutoAddRadarSongs() {
                 }
 
                 const shuffledSongs = [...uniqueSongs].sort(() => Math.random() - 0.5);
-                const songsToAdd = shuffledSongs.slice(0, 20);
+                const songsToAdd = shuffledSongs.slice(0, 10);
                 
                 if (songsToAdd.length > 0) {
                     state.playlistSongs = [...state.playlistSongs, ...songsToAdd];
@@ -5315,9 +5191,9 @@ async function exploreOnlineMusic() {
 
         // 使用两个关键词分别搜索
         const [results1, results2] = await Promise.all([
-            API.search(keyword1, "kuwo", SEARCH_PAGE_SIZE, Math.floor(randomOffset / SEARCH_PAGE_SIZE) + 1).catch(() => []),
-            API.search(keyword2, "kuwo", SEARCH_PAGE_SIZE, Math.floor((randomOffset + SEARCH_PAGE_SIZE) % MAX_RADAR_OFFSET / SEARCH_PAGE_SIZE) + 1).catch(() => [])
-        ]);
+		    API.search(keyword1, "netease", SEARCH_PAGE_SIZE, Math.floor(randomOffset / SEARCH_PAGE_SIZE) + 1).catch(() => []),
+		    API.search(keyword2, "netease", SEARCH_PAGE_SIZE, Math.floor((randomOffset + SEARCH_PAGE_SIZE) % MAX_RADAR_OFFSET / SEARCH_PAGE_SIZE) + 1).catch(() => [])
+		]);
 
         // 合并并去重搜索结果
         const allResults = [...(results1 || []), ...(results2 || [])];
@@ -5355,8 +5231,8 @@ async function exploreOnlineMusic() {
             // 随机打乱歌曲顺序
             const shuffledSongs = [...uniqueSongs].sort(() => Math.random() - 0.5);
             
-            // 添加最多30首去重后的歌曲到播放列表
-            const songsToAdd = shuffledSongs.slice(0, 30);
+            // 添加最多10首去重后的歌曲到播放列表
+            const songsToAdd = shuffledSongs.slice(0, 10);
             
             if (songsToAdd.length > 0) {
                 state.playlistSongs = [...state.playlistSongs, ...songsToAdd];
@@ -5393,8 +5269,6 @@ async function exploreOnlineMusic() {
     }
 }
 
-// 替换原来的 loadLyrics 函数
-// 替换原来的 loadLyrics 函数
 async function loadLyrics(song) {
     const tryLyricId = async (lyricId) => {
         try {
