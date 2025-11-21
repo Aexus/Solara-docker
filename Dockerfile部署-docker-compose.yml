@@ -1,6 +1,6 @@
 services:
   solara-music:
-    build: .
+    build: . 
     container_name: solara-music
     restart: unless-stopped
     ports:

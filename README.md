@@ -1,19 +1,17 @@
 基于https://github.com/akudamatata/Solara  项目进行修改，感谢原作者的无私分享。
 
-还在测试中，有问题请自行修改！！！
+部署方法(仅针对VPS，如果是使用软路由等部署，请根据实际情况调整docker-compose文件）
 
-使用Dockerfile进行部署，可以部署在VPS上，默认监听3001端口。
+一、使用Dockerfile进行部署：
 
-部署方法：
- 
-1. 在VPS上创建solara-music目录，这里我是在/opt目录下创建的，将所有文件上传到solara-music文件夹中。
+1. 在VPS上创建solara目录，将所有文件上传到solara文件夹中。
 
 2. 进入项目目录
 
-cd /opt/solara-music
+cd solara
 
-3. 打开docker-compose.yml,
-修改以下两项内容：
+3. 创建docker-compose.yml文件,填入"Dockerfile部署-docker-compose.yml"中的内容并修改以下两项内容：
+   
 - SOLARA_PASSWORD=solara123  # 修改为你的密码
 - SESSION_SECRET=KLmlKDruIBRYjrT5ct7B3xqG25ZF2p59    # 修改为随机字符串
 
@@ -30,6 +28,14 @@ docker compose down
 compose build --no-cache
 
 docker compose up -d
+
+二、拉取Docker镜像部署：
+
+1. 创建solara文件夹并进入文件夹
+2. 创建docker-compose.yml文件,填入"Docker镜像部署-docker-compose.yml"中的内容并修改密码
+3. docker compose pull
+4. docker compose up -d
+5. 使用网站反代 127.0.0.1:3001
 
 近期修改：
 1. 使用GD音乐台API接口，对移动端界面做了调整。
